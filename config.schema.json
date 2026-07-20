@@ -1,0 +1,69 @@
+{
+  "pluginAlias": "Ninebot",
+  "pluginType": "platform",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "平台名称",
+        "type": "string",
+        "default": "Ninebot"
+      },
+      "baseUrl": {
+        "title": "Ninebot Proxy 地址",
+        "type": "string",
+        "placeholder": "http://192.168.1.20:18009",
+        "description": "Homebridge 服务器可访问的 Ninebot Proxy 根地址。",
+        "format": "uri"
+      },
+      "bearerToken": {
+        "title": "Bearer Token（可选）",
+        "type": "string",
+        "password": true
+      },
+      "pollIntervalSeconds": {
+        "title": "刷新间隔（秒）",
+        "type": "integer",
+        "default": 30,
+        "minimum": 15,
+        "maximum": 3600
+      },
+      "requestTimeoutSeconds": {
+        "title": "请求超时（秒）",
+        "type": "integer",
+        "default": 12,
+        "minimum": 3,
+        "maximum": 60
+      },
+      "allowInsecureHttp": {
+        "title": "允许 HTTP 地址",
+        "type": "boolean",
+        "default": true
+      },
+      "showLockStatus": {
+        "title": "显示车辆锁状态",
+        "type": "boolean",
+        "default": true
+      },
+      "vehicles": {
+        "title": "车辆（留空则自动发现全部车辆）",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "sn": {
+              "title": "车辆 SN",
+              "type": "string",
+              "required": true
+            },
+            "name": {
+              "title": "HomeKit 中的名称",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "required": ["baseUrl"]
+  }
+}
