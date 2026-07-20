@@ -1,6 +1,8 @@
 node_modules/
-dist/
-.test-dist/
+# Keep compiled plugin artifacts in Git: GitHub/Homebridge installs do not run dev builds.
+# dist/
+.test-# Keep compiled plugin artifacts in Git: GitHub/Homebridge installs do not run dev builds.
+# dist/
 *.tgz
 .env
 .env.*
