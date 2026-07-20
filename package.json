@@ -1,0 +1,118 @@
+{
+  "name": "homebridge-ninebot",
+  "version": "1.0.0",
+  "description": "Premium Homebridge integration for Ninebot and Segway electric vehicles through a Ninebot-compatible proxy.",
+  "license": "MIT",
+  "author": "ligang2020",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ligang2020/homebridge-ninebot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ligang2020/homebridge-ninebot/issues"
+  },
+  "homepage": "https://github.com/ligang2020/homebridge-ninebot#readme",
+  "keywords": [
+    "homebridge-plugin",
+    "homekit",
+    "ninebot",
+    "segway",
+    "scooter",
+    "electric-vehicle"
+  ],
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0",
+    "homebridge": ">=1.8.0"
+  },
+  "scripts": {
+    "clean": "rm -rf dist .test-dist",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "test": "npm run build && tsc -p tsconfig.test.json && node --test .test-dist/test/*.test.js && rm -rf .test-dist",
+    "prepublishOnly": "npm run test"
+  },
+  "peerDependencies": {
+    "homebridge": ">=1.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "homebridge": "^1.11.0",
+    "typescript": "^5.9.0"
+  },
+  "homebridge": {
+    "pluginIdentifier": "homebridge-ninebot",
+    "platforms": [
+      "Ninebot"
+    ]
+  },
+  "config": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "平台名称",
+          "type": "string",
+          "default": "Ninebot"
+        },
+        "baseUrl": {
+          "title": "Ninebot Proxy 地址",
+          "type": "string",
+          "placeholder": "http://192.168.1.20:18009",
+          "required": true
+        },
+        "bearerToken": {
+          "title": "Bearer Token（可选）",
+          "type": "string",
+          "password": true
+        },
+        "pollIntervalSeconds": {
+          "title": "刷新间隔（秒）",
+          "type": "integer",
+          "default": 30,
+          "minimum": 15,
+          "maximum": 3600
+        },
+        "requestTimeoutSeconds": {
+          "title": "请求超时（秒）",
+          "type": "integer",
+          "default": 12,
+          "minimum": 3,
+          "maximum": 60
+        },
+        "allowInsecureHttp": {
+          "title": "允许 HTTP 地址",
+          "type": "boolean",
+          "default": true
+        },
+        "showLockStatus": {
+          "title": "显示车辆锁状态",
+          "type": "boolean",
+          "default": true
+        },
+        "vehicles": {
+          "title": "车辆（留空则自动发现全部车辆）",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sn": {
+                "title": "车辆 SN",
+                "type": "string",
+                "required": true
+              },
+              "name": {
+                "title": "HomeKit 中的名称",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
