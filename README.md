@@ -54,7 +54,7 @@
 - `vehicles`：留空自动发现全部车辆；也可以按 SN 固定指定车辆并自定义 HomeKit 名称。
 - `pollIntervalSeconds`：建议保留 `30` 秒，范围是 15–3600 秒。
 - `requestTimeoutSeconds`：单次连接 Ninebot Proxy 的最长等待时间；默认 `30` 秒，范围是 3–120 秒。若日志提示连接超时，可先设为 `60` 秒；若仍超时，请检查 Homebridge 主机到 Proxy 的网络连通性和 Proxy 服务状态。
-- 当 Proxy 未返回电量或电池温度时，插件不会再把缺失数据伪装为 `0`，也不会让 HomeKit 的读取处理器反复报错；会保留最后一次有效读数，首次读取仍缺失时会暂时隐藏对应服务，直到 Proxy 返回有效读数。
+- 所有 HomeKit 读取都只返回插件缓存，不会在用户打开家庭 App 时并发请求 Proxy；因此 Proxy 离线或缓慢时不会触发“读取处理器过慢/未响应”错误。电量或温度首次缺失时会暂时隐藏对应服务而不是显示 `0`，收到有效值后会自动显示。
 - `allowInsecureHttp`：局域网内常用 HTTP 代理时保持 `true`；公网环境建议使用 HTTPS 并改为 `false`。
 
 指定单台车的示例：

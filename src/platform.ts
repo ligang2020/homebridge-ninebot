@@ -141,7 +141,7 @@ export class NinebotPlatform {
       .setCharacteristic(this.Characteristic.Manufacturer, 'Ninebot / Segway')
       .setCharacteristic(this.Characteristic.Model, vehicle.model || 'Electric Vehicle')
       .setCharacteristic(this.Characteristic.SerialNumber, vehicle.sn)
-      .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.3');
+      .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.4');
 
     // Battery values are optional in the Proxy response. Do not create HomeKit
     // services until there is a real value: HomeKit otherwise displays its 0
@@ -151,12 +151,14 @@ export class NinebotPlatform {
 
     const power = this.getOrAddService(accessory, this.Service.Switch, 'engine', '车辆电源');
     power.getCharacteristic(this.Characteristic.On)
-      .onGet(() => this.readState(vehicle.sn).then((state) => state.isPoweredOn ?? false))
+      .onGet(() => this.getCachedState(accessory)?.isPoweredOn ?? false)
       .onSet(async (value: unknown) => this.setEnginePower(vehicle.sn, Boolean(value)));
 
     const online = this.getOrAddService(accessory, this.Service.OccupancySensor, 'power-state', '车辆已上电');
     online.getCharacteristic(this.Characteristic.OccupancyDetected).onGet(() =>
-      this.readState(vehicle.sn).then((state) => state.isPoweredOn ? this.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED : this.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED),
+      this.getCachedState(accessory)?.isPoweredOn
+        ? this.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED
+        : this.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED,
     );
 
     const bell = this.getOrAddService(accessory, this.Service.Switch, 'bell', '寻车响铃');
@@ -201,37 +203,9 @@ export class NinebotPlatform {
     };
     for (const [characteristicName, stateKey] of Object.entries(mappings) as [MetricKey, MetricKey][]) {
       service.getCharacteristic(characteristics[characteristicName]).onGet(() =>
-        this.readState(sn).then((state) => state[stateKey] ?? 0),
+        this.getCachedState(this.accessories.get(sn))?.[stateKey] ?? 0,
       );
     }
-  }
-
-  private async readState(sn: string): Promise<NinebotVehicleState> {
-    const accessory = this.accessories.get(sn);
-    const cached = this.getCachedState(accessory);
-    // Polling already refreshes every configured interval. HomeKit may ask for
-    // several characteristics at once, so use fresh cache instead of starting a
-    // new set of status/battery/travel requests for every read handler.
-    if (cached && this.isFresh(cached)) {
-      return cached;
-    }
-    try {
-      await this.refreshAccessory(sn);
-      return this.getCachedState(accessory) || { updatedAt: new Date().toISOString() };
-    } catch (error) {
-      if (cached) {
-        this.log.debug(`[Ninebot] 使用 ${this.vehicleNames.get(sn) || sn} 的最后有效数据：${formatError(error)}`);
-        return cached;
-      }
-      // A read handler must not throw just because a temporarily unreachable
-      // Proxy has no initial data. The periodic refresh logs the root cause.
-      return { updatedAt: new Date().toISOString() };
-    }
-  }
-
-  private isFresh(state: NinebotVehicleState): boolean {
-    const updatedAt = Date.parse(state.updatedAt);
-    return Number.isFinite(updatedAt) && Date.now() - updatedAt < this.config.pollIntervalSeconds * 1000;
   }
 
   private async refreshAll(): Promise<void> {
@@ -396,20 +370,19 @@ export class NinebotPlatform {
     setTimeout(() => service.updateCharacteristic(this.Characteristic.On, false), 800);
   }
 
-  private readLockCurrentState(sn: string): Promise<number> {
-    return this.readState(sn).then((state) => state.isLocked === true
+  private readLockCurrentState(sn: string): number {
+    const state = this.getCachedState(this.accessories.get(sn));
+    return state?.isLocked === true
       ? this.Characteristic.LockCurrentState.SECURED
-      : state.isLocked === false
+      : state?.isLocked === false
         ? this.Characteristic.LockCurrentState.UNSECURED
-        : this.Characteristic.LockCurrentState.UNKNOWN,
-    );
+        : this.Characteristic.LockCurrentState.UNKNOWN;
   }
 
-  private readLockTargetState(sn: string): Promise<number> {
-    return this.readState(sn).then((state) => state.isLocked === true
+  private readLockTargetState(sn: string): number {
+    return this.getCachedState(this.accessories.get(sn))?.isLocked === true
       ? this.Characteristic.LockTargetState.SECURED
-      : this.Characteristic.LockTargetState.UNSECURED,
-    );
+      : this.Characteristic.LockTargetState.UNSECURED;
   }
 
   private updateCachedState(sn: string, patch: Partial<NinebotVehicleState>): void {

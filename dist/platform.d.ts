@@ -20,8 +20,6 @@ export declare class NinebotPlatform {
     private discoverDevices;
     private configureServices;
     private configureMetricGetters;
-    private readState;
-    private isFresh;
     private refreshAll;
     private refreshAccessory;
     private refreshAccessoryInternal;
