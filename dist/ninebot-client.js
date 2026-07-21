@@ -139,10 +139,14 @@ function parseVehicleState(statusPayload, travelPayload, batteryPayload) {
     const batteryMainObject = firstObject(batteryPayloadObject, ['battery_main', 'batteryMain']) ?? {};
     const batterySources = [status, batteryObject, batteryPayloadObject, batteryListObject, batteryMainObject];
     const location = asObject(status.loc);
+    const locationInfo = asObject(status.locationInfo);
     const lockNumber = numberValue(location?.lock) ?? numberValue(status.lock_status);
     const rides = extractArray(travel, ['list', 'rides', 'records']);
     const lastRide = asObject(rides[0]);
-    const battery = firstNumber([status, batteryPayloadObject, batteryListObject], ['dump_energy', 'dumpEnergy', 'electricity']);
+    const battery = firstNumber(batterySources, [
+        'dump_energy', 'dumpEnergy', 'electricity', 'battery_level', 'batteryLevel',
+        'battery_percent', 'batteryPercent', 'capacity_percent', 'capacityPercent', 'soc',
+    ]);
     const batteryTemperature = normalizeTemperature(firstNumber(batterySources, [
         'battery_temperature', 'batteryTemperature', 'battery_temp', 'batteryTemp', 'batt_temperature', 'battTemperature',
         'batt_temp', 'battTemp', 'bat_temperature', 'batTemperature', 'bms_temperature', 'bmsTemperature', 'bms_temp', 'bmsTemp', 'temperature', 'temp',
@@ -165,13 +169,18 @@ function parseVehicleState(statusPayload, travelPayload, batteryPayload) {
         ])),
         batteryTemperature,
         batteryCycleCount: firstNumber([batteryListObject, batteryPayloadObject], ['bms_cycle', 'bmsCycle', 'cycle', 'cycles']),
-        chargingPower: firstNumber([batteryPayloadObject], ['charging_power', 'chargingPower', 'charge_power', 'chargePower']),
+        chargingPower: firstNumber(batterySources, ['charging_power', 'chargingPower', 'charge_power', 'chargePower']),
         endurance: firstNumber([status], ['precise_estimate_mileage', 'preciseEstimateMileage', 'estimate_mileage', 'estimateMileage']),
         aiEstimatedMileage: firstNumber([status], ['ai_estimate_mileage', 'aiEstimateMileage', 'ai_estimated_mileage', 'aiEstimatedMileage']),
-        isCharging: firstBoolean([status, batteryPayloadObject], ['charging', 'chargingState'], 1),
+        isCharging: firstBoolean(batterySources, ['charging', 'chargingState'], 1),
+        isChargerConnected: firstBoolean(batterySources, [
+            'charger_connected', 'chargerConnected', 'charge_connected', 'chargeConnected', 'is_charger_connected', 'isChargerConnected',
+        ], 1),
         isPoweredOn: firstBoolean([status], ['pwr', 'powerStatus'], 1),
         isLocked: lockNumber === undefined ? undefined : lockNumber === 1,
-        remainingChargeTime: firstNumber([status, batteryPayloadObject], ['remain_charge_time', 'remainChargeTime', 'remainingChargeTime']),
+        remainingChargeTime: firstNumber(batterySources, ['remain_charge_time', 'remainChargeTime', 'remainingChargeTime']),
+        latitude: normalizeCoordinate(firstNumber([location ?? {}, locationInfo ?? {}], ['lat', 'latitude']), 90),
+        longitude: normalizeCoordinate(firstNumber([location ?? {}, locationInfo ?? {}], ['lon', 'lng', 'longitude']), 180),
         totalMileage: firstNumber([status, travel], ['total_mileage', 'totalMileage', 'total_mileages']),
         monthMileage,
         monthEnergyWh,
@@ -297,6 +306,21 @@ function normalizeTemperature(value) {
         return undefined;
     }
     return Math.abs(value) > 120 ? value / 10 : value;
+}
+function normalizeCoordinate(value, limit) {
+    if (value === undefined || !Number.isFinite(value)) {
+        return undefined;
+    }
+    if (Math.abs(value) <= limit) {
+        return value;
+    }
+    for (const divisor of [1_000_000, 10_000_000, 100_000]) {
+        const normalized = value / divisor;
+        if (Math.abs(normalized) <= limit) {
+            return normalized;
+        }
+    }
+    return undefined;
 }
 function normalizeEnergy(value, distanceKm) {
     if (value === undefined || !Number.isFinite(value) || value < 0) {

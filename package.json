@@ -1,6 +1,6 @@
 {
   "name": "homebridge-ninebot",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Premium Homebridge integration for Ninebot and Segway electric vehicles through a Ninebot-compatible proxy.",
   "license": "MIT",
   "author": "ligang2020",

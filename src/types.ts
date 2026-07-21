@@ -33,9 +33,13 @@ export interface NinebotVehicleState {
   endurance?: number;
   aiEstimatedMileage?: number;
   isCharging?: boolean;
+  /** Whether the proxy explicitly reports that a charger is connected. */
+  isChargerConnected?: boolean;
   isPoweredOn?: boolean;
   isLocked?: boolean;
   remainingChargeTime?: number;
+  latitude?: number;
+  longitude?: number;
   totalMileage?: number;
   monthMileage?: number;
   monthEnergyWh?: number;

@@ -19,7 +19,7 @@ const ACCESSORY_CONTEXT_KEY = 'ninebot';
 
 type HAPConstructor = new (...args: any[]) => any;
 
-type MetricKey = 'endurance' | 'totalMileage' | 'monthMileage' | 'monthEnergyWh' | 'monthEnergyPerKm' | 'lastMileage' | 'lastEnergyWh' | 'lastEnergyPerKm';
+type MetricKey = 'batteryVoltage' | 'remainingChargeTime' | 'latitude' | 'longitude' | 'endurance' | 'totalMileage' | 'monthMileage' | 'monthEnergyWh' | 'monthEnergyPerKm' | 'lastMileage' | 'lastEnergyWh' | 'lastEnergyPerKm';
 
 interface ResolvedConfig {
   name: string;
@@ -141,25 +141,20 @@ export class NinebotPlatform {
       .setCharacteristic(this.Characteristic.Manufacturer, 'Ninebot / Segway')
       .setCharacteristic(this.Characteristic.Model, vehicle.model || 'Electric Vehicle')
       .setCharacteristic(this.Characteristic.SerialNumber, vehicle.sn)
-      .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.4');
+      .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.5');
 
     // Battery values are optional in the Proxy response. Do not create HomeKit
     // services until there is a real value: HomeKit otherwise displays its 0
     // default and repeatedly invokes read handlers for unavailable data.
+    this.removeLegacyPowerStateService(accessory);
     this.syncBatteryService(accessory);
+    this.syncChargerService(accessory);
     this.syncTemperatureService(accessory);
 
     const power = this.getOrAddService(accessory, this.Service.Switch, 'engine', '车辆电源');
     power.getCharacteristic(this.Characteristic.On)
       .onGet(() => this.getCachedState(accessory)?.isPoweredOn ?? false)
       .onSet(async (value: unknown) => this.setEnginePower(vehicle.sn, Boolean(value)));
-
-    const online = this.getOrAddService(accessory, this.Service.OccupancySensor, 'power-state', '车辆已上电');
-    online.getCharacteristic(this.Characteristic.OccupancyDetected).onGet(() =>
-      this.getCachedState(accessory)?.isPoweredOn
-        ? this.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED
-        : this.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED,
-    );
 
     const bell = this.getOrAddService(accessory, this.Service.Switch, 'bell', '寻车响铃');
     bell.getCharacteristic(this.Characteristic.On).onSet(async (value: unknown) => {
@@ -184,7 +179,8 @@ export class NinebotPlatform {
       });
     }
 
-    const metrics = this.getOrAddService(accessory, this.MetricService, 'metrics', '骑行数据');
+    const metrics = this.getOrAddService(accessory, this.MetricService, 'metrics', '车辆状态与骑行数据');
+    metrics.setCharacteristic(this.Characteristic.Name, '车辆状态与骑行数据');
     this.configureMetricGetters(metrics, vehicle.sn);
     this.api.updatePlatformAccessories([accessory]);
   }
@@ -192,6 +188,10 @@ export class NinebotPlatform {
   private configureMetricGetters(service: any, sn: string): void {
     const characteristics = (this.MetricService as any).Characteristics as Record<MetricKey, HAPConstructor>;
     const mappings: Record<MetricKey, MetricKey> = {
+      batteryVoltage: 'batteryVoltage',
+      remainingChargeTime: 'remainingChargeTime',
+      latitude: 'latitude',
+      longitude: 'longitude',
       endurance: 'endurance',
       totalMileage: 'totalMileage',
       monthMileage: 'monthMileage',
@@ -283,6 +283,39 @@ export class NinebotPlatform {
     );
   }
 
+  private syncChargerService(accessory: PlatformAccessory): void {
+    const state = this.getCachedState(accessory);
+    const charger = accessory.getServiceById(this.Service.Outlet, 'charger');
+    if (state?.isCharging === undefined && state?.isChargerConnected === undefined) {
+      if (charger) {
+        accessory.removeService(charger);
+      }
+      return;
+    }
+
+    const chargerService = charger ?? this.getOrAddService(accessory, this.Service.Outlet, 'charger', '充电器');
+    const readChargerConnected = () => {
+      const cached = this.getCachedState(accessory);
+      return cached?.isChargerConnected ?? cached?.isCharging ?? false;
+    };
+    chargerService.getCharacteristic(this.Characteristic.On)
+      .onGet(readChargerConnected)
+      .onSet(async () => {
+        throw new Error('充电器状态由车辆只读上报，当前 Ninebot Proxy 未提供控制充电器的接口。');
+      });
+    chargerService.getCharacteristic(this.Characteristic.OutletInUse).onGet(() =>
+      this.getCachedState(accessory)?.isCharging ?? false,
+    );
+  }
+
+  private removeLegacyPowerStateService(accessory: PlatformAccessory): void {
+    const legacy = accessory.getServiceById(this.Service.OccupancySensor, 'power-state');
+    if (legacy) {
+      accessory.removeService(legacy);
+      this.log.debug(`[Ninebot] 已移除旧版“车辆已上电”人体传感器：${accessory.displayName}`);
+    }
+  }
+
   private syncTemperatureService(accessory: PlatformAccessory): void {
     const state = this.getCachedState(accessory);
     let temperature = accessory.getServiceById(this.Service.TemperatureSensor, 'battery-temperature');
@@ -302,6 +335,7 @@ export class NinebotPlatform {
   private applyState(accessory: PlatformAccessory, snapshot: NinebotVehicleSnapshot): void {
     const state = snapshot.state;
     this.syncBatteryService(accessory);
+    this.syncChargerService(accessory);
     this.syncTemperatureService(accessory);
     const battery = accessory.getServiceById(this.Service.BatteryService, 'battery');
     if (state.battery !== undefined) {
@@ -322,10 +356,11 @@ export class NinebotPlatform {
     }
     accessory.getServiceById(this.Service.Switch, 'engine')
       ?.updateCharacteristic(this.Characteristic.On, state.isPoweredOn ?? false);
-    accessory.getServiceById(this.Service.OccupancySensor, 'power-state')
-      ?.updateCharacteristic(this.Characteristic.OccupancyDetected,
-        state.isPoweredOn ? this.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED : this.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED,
-      );
+    const charger = accessory.getServiceById(this.Service.Outlet, 'charger');
+    if (charger) {
+      charger.updateCharacteristic(this.Characteristic.On, state.isChargerConnected ?? state.isCharging ?? false);
+      charger.updateCharacteristic(this.Characteristic.OutletInUse, state.isCharging ?? false);
+    }
 
     const lock = accessory.getServiceById(this.Service.LockMechanism, 'lock');
     if (lock) {
@@ -408,7 +443,7 @@ export class NinebotPlatform {
 
   private createMetricService(): HAPConstructor {
     const hap: any = this.api.hap;
-    const createMetric = (displayName: string, key: string, unit: string, minStep: number): HAPConstructor => {
+    const createMetric = (displayName: string, key: string, unit: string, minStep: number, minValue = 0): HAPConstructor => {
       const uuid = hap.uuid.generate(`${PLUGIN_NAME}:characteristic:${key}`);
       const MetricCharacteristic = class extends hap.Characteristic {
         static readonly UUID = uuid;
@@ -417,7 +452,7 @@ export class NinebotPlatform {
           this.setProps({
             format: hap.Formats.FLOAT,
             unit,
-            minValue: 0,
+            minValue,
             minStep,
             perms: [hap.Perms.PAIRED_READ, hap.Perms.NOTIFY],
           });
@@ -428,6 +463,10 @@ export class NinebotPlatform {
     };
 
     const Characteristics = {
+      batteryVoltage: createMetric('电池电压', 'battery-voltage-v', 'V', 0.1),
+      remainingChargeTime: createMetric('预估充满剩余时间', 'remaining-charge-time-min', 'min', 1),
+      latitude: createMetric('车辆纬度', 'vehicle-latitude', '°', 0.000001, -90),
+      longitude: createMetric('车辆经度', 'vehicle-longitude', '°', 0.000001, -180),
       endurance: createMetric('预计续航', 'range-km', 'km', 0.1),
       totalMileage: createMetric('总里程', 'total-mileage-km', 'km', 0.1),
       monthMileage: createMetric('本月里程', 'month-mileage-km', 'km', 0.1),

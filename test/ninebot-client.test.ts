@@ -59,3 +59,28 @@ test('keeps unavailable battery values undefined instead of treating them as zer
   assert.equal(state.battery, undefined);
   assert.equal(state.batteryTemperature, undefined);
 });
+
+test('extracts nested battery level, charger status, remaining charge time, and vehicle coordinates', () => {
+  const state = parseVehicleState(
+    {
+      battery: { batteryLevel: 64 },
+      charging: false,
+      locationInfo: { latitude: 31230400, longitude: 121473700 },
+    },
+    {},
+    {
+      chargerConnected: true,
+      remainChargeTime: 95,
+      battery_list: [{ battery_voltage: 52340, battery_temperature: 285 }],
+    },
+  );
+
+  assert.equal(state.battery, 64);
+  assert.equal(state.isCharging, false);
+  assert.equal(state.isChargerConnected, true);
+  assert.equal(state.remainingChargeTime, 95);
+  assert.equal(state.batteryVoltage, 52.34);
+  assert.equal(state.batteryTemperature, 28.5);
+  assert.equal(state.latitude, 31.2304);
+  assert.equal(state.longitude, 121.4737);
+});

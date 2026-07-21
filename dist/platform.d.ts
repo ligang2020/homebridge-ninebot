@@ -24,6 +24,8 @@ export declare class NinebotPlatform {
     private refreshAccessory;
     private refreshAccessoryInternal;
     private syncBatteryService;
+    private syncChargerService;
+    private removeLegacyPowerStateService;
     private syncTemperatureService;
     private applyState;
     private setEnginePower;
