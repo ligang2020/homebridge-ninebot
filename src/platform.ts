@@ -43,6 +43,8 @@ export class NinebotPlatform {
   private readonly MetricService: HAPConstructor;
   private pollTimer?: NodeJS.Timeout;
   private refreshing = false;
+  /** Coalesce concurrent characteristic reads into one Proxy request per vehicle. */
+  private readonly refreshes = new Map<string, Promise<void>>();
 
   constructor(
     public readonly log: Logger,
@@ -139,28 +141,13 @@ export class NinebotPlatform {
       .setCharacteristic(this.Characteristic.Manufacturer, 'Ninebot / Segway')
       .setCharacteristic(this.Characteristic.Model, vehicle.model || 'Electric Vehicle')
       .setCharacteristic(this.Characteristic.SerialNumber, vehicle.sn)
-      .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.2');
+      .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.3');
 
-    const battery = this.getOrAddService(accessory, this.Service.BatteryService, 'battery', '电池');
-    battery.getCharacteristic(this.Characteristic.BatteryLevel).onGet(async () => {
-      const state = await this.readState(vehicle.sn);
-      return requireProxyValue(state.battery, '电池电量');
-    });
-    battery.getCharacteristic(this.Characteristic.ChargingState).onGet(() => this.readState(vehicle.sn).then((state) =>
-      state.isCharging === true ? this.Characteristic.ChargingState.CHARGING : this.Characteristic.ChargingState.NOT_CHARGING,
-    ));
-    battery.getCharacteristic(this.Characteristic.StatusLowBattery).onGet(async () => {
-      const state = await this.readState(vehicle.sn);
-      return requireProxyValue(state.battery, '电池电量') <= 20
-        ? this.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
-        : this.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL;
-    });
-
-    const temperature = this.getOrAddService(accessory, this.Service.TemperatureSensor, 'battery-temperature', '电池温度');
-    temperature.getCharacteristic(this.Characteristic.CurrentTemperature).onGet(async () => {
-      const state = await this.readState(vehicle.sn);
-      return requireProxyValue(state.batteryTemperature, '电池温度');
-    });
+    // Battery values are optional in the Proxy response. Do not create HomeKit
+    // services until there is a real value: HomeKit otherwise displays its 0
+    // default and repeatedly invokes read handlers for unavailable data.
+    this.syncBatteryService(accessory);
+    this.syncTemperatureService(accessory);
 
     const power = this.getOrAddService(accessory, this.Service.Switch, 'engine', '车辆电源');
     power.getCharacteristic(this.Characteristic.On)
@@ -221,17 +208,30 @@ export class NinebotPlatform {
 
   private async readState(sn: string): Promise<NinebotVehicleState> {
     const accessory = this.accessories.get(sn);
+    const cached = this.getCachedState(accessory);
+    // Polling already refreshes every configured interval. HomeKit may ask for
+    // several characteristics at once, so use fresh cache instead of starting a
+    // new set of status/battery/travel requests for every read handler.
+    if (cached && this.isFresh(cached)) {
+      return cached;
+    }
     try {
       await this.refreshAccessory(sn);
       return this.getCachedState(accessory) || { updatedAt: new Date().toISOString() };
     } catch (error) {
-      const cached = this.getCachedState(accessory);
       if (cached) {
         this.log.debug(`[Ninebot] 使用 ${this.vehicleNames.get(sn) || sn} 的最后有效数据：${formatError(error)}`);
         return cached;
       }
-      throw error;
+      // A read handler must not throw just because a temporarily unreachable
+      // Proxy has no initial data. The periodic refresh logs the root cause.
+      return { updatedAt: new Date().toISOString() };
     }
+  }
+
+  private isFresh(state: NinebotVehicleState): boolean {
+    const updatedAt = Date.parse(state.updatedAt);
+    return Number.isFinite(updatedAt) && Date.now() - updatedAt < this.config.pollIntervalSeconds * 1000;
   }
 
   private async refreshAll(): Promise<void> {
@@ -253,6 +253,16 @@ export class NinebotPlatform {
   }
 
   private async refreshAccessory(sn: string): Promise<void> {
+    const existing = this.refreshes.get(sn);
+    if (existing) {
+      return existing;
+    }
+    const refresh = this.refreshAccessoryInternal(sn).finally(() => this.refreshes.delete(sn));
+    this.refreshes.set(sn, refresh);
+    return refresh;
+  }
+
+  private async refreshAccessoryInternal(sn: string): Promise<void> {
     if (!this.client) {
       throw new Error('Ninebot 客户端没有初始化。');
     }
@@ -273,8 +283,52 @@ export class NinebotPlatform {
     this.api.updatePlatformAccessories([accessory]);
   }
 
+  private syncBatteryService(accessory: PlatformAccessory): void {
+    const state = this.getCachedState(accessory);
+    let battery = accessory.getServiceById(this.Service.BatteryService, 'battery');
+    if (state?.battery === undefined) {
+      if (battery) {
+        accessory.removeService(battery);
+      }
+      return;
+    }
+    const batteryValue = state.battery;
+    const batteryService = battery ?? this.getOrAddService(accessory, this.Service.BatteryService, 'battery', '电池');
+    batteryService.getCharacteristic(this.Characteristic.BatteryLevel).onGet(() =>
+      this.getCachedState(accessory)?.battery ?? batteryValue,
+    );
+    batteryService.getCharacteristic(this.Characteristic.ChargingState).onGet(() =>
+      this.getCachedState(accessory)?.isCharging === true
+        ? this.Characteristic.ChargingState.CHARGING
+        : this.Characteristic.ChargingState.NOT_CHARGING,
+    );
+    batteryService.getCharacteristic(this.Characteristic.StatusLowBattery).onGet(() =>
+      (this.getCachedState(accessory)?.battery ?? batteryValue) <= 20
+        ? this.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
+        : this.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL,
+    );
+  }
+
+  private syncTemperatureService(accessory: PlatformAccessory): void {
+    const state = this.getCachedState(accessory);
+    let temperature = accessory.getServiceById(this.Service.TemperatureSensor, 'battery-temperature');
+    if (state?.batteryTemperature === undefined) {
+      if (temperature) {
+        accessory.removeService(temperature);
+      }
+      return;
+    }
+    const temperatureValue = state.batteryTemperature;
+    const temperatureService = temperature ?? this.getOrAddService(accessory, this.Service.TemperatureSensor, 'battery-temperature', '电池温度');
+    temperatureService.getCharacteristic(this.Characteristic.CurrentTemperature).onGet(() =>
+      this.getCachedState(accessory)?.batteryTemperature ?? temperatureValue,
+    );
+  }
+
   private applyState(accessory: PlatformAccessory, snapshot: NinebotVehicleSnapshot): void {
     const state = snapshot.state;
+    this.syncBatteryService(accessory);
+    this.syncTemperatureService(accessory);
     const battery = accessory.getServiceById(this.Service.BatteryService, 'battery');
     if (state.battery !== undefined) {
       battery?.updateCharacteristic(this.Characteristic.BatteryLevel, state.battery);

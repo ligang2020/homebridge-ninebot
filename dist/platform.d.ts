@@ -13,14 +13,20 @@ export declare class NinebotPlatform {
     private readonly MetricService;
     private pollTimer?;
     private refreshing;
+    /** Coalesce concurrent characteristic reads into one Proxy request per vehicle. */
+    private readonly refreshes;
     constructor(log: Logger, rawConfig: NinebotPlatformConfig & PlatformConfig, api: API);
     configureAccessory(accessory: PlatformAccessory): void;
     private discoverDevices;
     private configureServices;
     private configureMetricGetters;
     private readState;
+    private isFresh;
     private refreshAll;
     private refreshAccessory;
+    private refreshAccessoryInternal;
+    private syncBatteryService;
+    private syncTemperatureService;
     private applyState;
     private setEnginePower;
     private runMomentaryCommand;
