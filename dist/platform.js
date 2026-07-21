@@ -108,15 +108,24 @@ class NinebotPlatform {
             .setCharacteristic(this.Characteristic.Manufacturer, 'Ninebot / Segway')
             .setCharacteristic(this.Characteristic.Model, vehicle.model || 'Electric Vehicle')
             .setCharacteristic(this.Characteristic.SerialNumber, vehicle.sn)
-            .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.0');
+            .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.2');
         const battery = this.getOrAddService(accessory, this.Service.BatteryService, 'battery', '电池');
-        battery.getCharacteristic(this.Characteristic.BatteryLevel).onGet(() => this.readState(vehicle.sn).then((state) => state.battery ?? 0));
+        battery.getCharacteristic(this.Characteristic.BatteryLevel).onGet(async () => {
+            const state = await this.readState(vehicle.sn);
+            return requireProxyValue(state.battery, '电池电量');
+        });
         battery.getCharacteristic(this.Characteristic.ChargingState).onGet(() => this.readState(vehicle.sn).then((state) => state.isCharging === true ? this.Characteristic.ChargingState.CHARGING : this.Characteristic.ChargingState.NOT_CHARGING));
-        battery.getCharacteristic(this.Characteristic.StatusLowBattery).onGet(() => this.readState(vehicle.sn).then((state) => state.battery !== undefined && state.battery <= 20
-            ? this.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
-            : this.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL));
+        battery.getCharacteristic(this.Characteristic.StatusLowBattery).onGet(async () => {
+            const state = await this.readState(vehicle.sn);
+            return requireProxyValue(state.battery, '电池电量') <= 20
+                ? this.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
+                : this.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL;
+        });
         const temperature = this.getOrAddService(accessory, this.Service.TemperatureSensor, 'battery-temperature', '电池温度');
-        temperature.getCharacteristic(this.Characteristic.CurrentTemperature).onGet(() => this.readState(vehicle.sn).then((state) => state.batteryTemperature ?? 0));
+        temperature.getCharacteristic(this.Characteristic.CurrentTemperature).onGet(async () => {
+            const state = await this.readState(vehicle.sn);
+            return requireProxyValue(state.batteryTemperature, '电池温度');
+        });
         const power = this.getOrAddService(accessory, this.Service.Switch, 'engine', '车辆电源');
         power.getCharacteristic(this.Characteristic.On)
             .onGet(() => this.readState(vehicle.sn).then((state) => state.isPoweredOn ?? false))
@@ -207,20 +216,30 @@ class NinebotPlatform {
         }
         const vehicle = { sn, name: this.vehicleNames.get(sn) || accessory.displayName };
         const snapshot = await this.client.getVehicleSnapshot(vehicle);
-        accessory.context.ninebotState = snapshot.state;
-        this.applyState(accessory, snapshot);
+        // Some proxy responses omit individual fields. Keep the last valid value rather
+        // than replacing it with HomeKit's misleading default of 0.
+        const resolvedSnapshot = {
+            ...snapshot,
+            state: { ...this.getCachedState(accessory), ...snapshot.state },
+        };
+        accessory.context.ninebotState = resolvedSnapshot.state;
+        this.applyState(accessory, resolvedSnapshot);
         this.api.updatePlatformAccessories([accessory]);
     }
     applyState(accessory, snapshot) {
         const state = snapshot.state;
         const battery = accessory.getServiceById(this.Service.BatteryService, 'battery');
-        battery?.updateCharacteristic(this.Characteristic.BatteryLevel, state.battery ?? 0);
+        if (state.battery !== undefined) {
+            battery?.updateCharacteristic(this.Characteristic.BatteryLevel, state.battery);
+        }
         battery?.updateCharacteristic(this.Characteristic.ChargingState, state.isCharging === true ? this.Characteristic.ChargingState.CHARGING : this.Characteristic.ChargingState.NOT_CHARGING);
         battery?.updateCharacteristic(this.Characteristic.StatusLowBattery, state.battery !== undefined && state.battery <= 20
             ? this.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
             : this.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL);
-        accessory.getServiceById(this.Service.TemperatureSensor, 'battery-temperature')
-            ?.updateCharacteristic(this.Characteristic.CurrentTemperature, state.batteryTemperature ?? 0);
+        if (state.batteryTemperature !== undefined) {
+            accessory.getServiceById(this.Service.TemperatureSensor, 'battery-temperature')
+                ?.updateCharacteristic(this.Characteristic.CurrentTemperature, state.batteryTemperature);
+        }
         accessory.getServiceById(this.Service.Switch, 'engine')
             ?.updateCharacteristic(this.Characteristic.On, state.isPoweredOn ?? false);
         accessory.getServiceById(this.Service.OccupancySensor, 'power-state')
@@ -342,7 +361,7 @@ function resolveConfig(config) {
         baseUrl: config.baseUrl?.trim() || undefined,
         bearerToken: config.bearerToken?.trim() || undefined,
         pollIntervalSeconds: clampInteger(config.pollIntervalSeconds, 30, 15, 3600),
-        requestTimeoutSeconds: clampInteger(config.requestTimeoutSeconds, 12, 3, 60),
+        requestTimeoutSeconds: clampInteger(config.requestTimeoutSeconds, 30, 3, 120),
         allowInsecureHttp: config.allowInsecureHttp ?? true,
         showLockStatus: config.showLockStatus ?? true,
         vehicles: Array.isArray(config.vehicles)
@@ -364,5 +383,11 @@ function clampInteger(value, fallback, minimum, maximum) {
 }
 function formatError(error) {
     return error instanceof Error ? error.message : String(error);
+}
+function requireProxyValue(value, label) {
+    if (value === undefined) {
+        throw new Error(`Ninebot Proxy 未返回${label}。`);
+    }
+    return value;
 }
 //# sourceMappingURL=platform.js.map

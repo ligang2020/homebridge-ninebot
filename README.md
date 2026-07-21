@@ -42,7 +42,7 @@
   "baseUrl": "http://192.168.1.20:18009",
   "bearerToken": "",
   "pollIntervalSeconds": 30,
-  "requestTimeoutSeconds": 12,
+  "requestTimeoutSeconds": 30,
   "allowInsecureHttp": true,
   "showLockStatus": true,
   "vehicles": []
@@ -53,6 +53,8 @@
 - `bearerToken`：仅当你的代理/平台启用了 Bearer Token 时填写。
 - `vehicles`：留空自动发现全部车辆；也可以按 SN 固定指定车辆并自定义 HomeKit 名称。
 - `pollIntervalSeconds`：建议保留 `30` 秒，范围是 15–3600 秒。
+- `requestTimeoutSeconds`：单次连接 Ninebot Proxy 的最长等待时间；默认 `30` 秒，范围是 3–120 秒。若日志提示连接超时，可先设为 `60` 秒；若仍超时，请检查 Homebridge 主机到 Proxy 的网络连通性和 Proxy 服务状态。
+- 当 Proxy 未返回电量或电池温度时，插件不会再把缺失数据伪装为 `0`；会保留最后一次有效读数，首次读取仍缺失时 HomeKit 会显示该服务不可用。
 - `allowInsecureHttp`：局域网内常用 HTTP 代理时保持 `true`；公网环境建议使用 HTTPS 并改为 `false`。
 
 指定单台车的示例：

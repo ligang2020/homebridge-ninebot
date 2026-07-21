@@ -52,3 +52,10 @@ test('supports common data envelopes and chooses plausible energy units', () => 
   assert.equal(normalizeEnergy(4, undefined), 4000);
   assert.equal(normalizeEnergy(400, 10), 400);
 });
+
+test('keeps unavailable battery values undefined instead of treating them as zero', () => {
+  const state = parseVehicleState({}, {}, {});
+
+  assert.equal(state.battery, undefined);
+  assert.equal(state.batteryTemperature, undefined);
+});

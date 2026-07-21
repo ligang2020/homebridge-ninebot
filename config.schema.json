@@ -31,9 +31,10 @@
       "requestTimeoutSeconds": {
         "title": "请求超时（秒）",
         "type": "integer",
-        "default": 12,
+        "default": 30,
         "minimum": 3,
-        "maximum": 60
+        "maximum": 120,
+        "description": "单次访问 Ninebot Proxy 的最长等待时间。网络较慢或代理首次唤醒时，建议设为 30–60 秒。"
       },
       "allowInsecureHttp": {
         "title": "允许 HTTP 地址",
@@ -64,6 +65,8 @@
         }
       }
     },
-    "required": ["baseUrl"]
+    "required": [
+      "baseUrl"
+    ]
   }
 }

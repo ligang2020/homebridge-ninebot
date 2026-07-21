@@ -42,7 +42,7 @@ export class NinebotClient {
 
     this.baseUrl = url;
     this.bearerToken = options.bearerToken?.trim() || undefined;
-    this.timeoutMs = clampNumber(options.timeoutSeconds ?? 12, 3, 60) * 1000;
+    this.timeoutMs = clampNumber(options.timeoutSeconds ?? 30, 3, 120) * 1000;
   }
 
   async listVehicles(): Promise<NinebotVehicle[]> {
