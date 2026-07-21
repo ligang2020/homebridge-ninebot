@@ -110,7 +110,7 @@ class NinebotPlatform {
             .setCharacteristic(this.Characteristic.Manufacturer, 'Ninebot / Segway')
             .setCharacteristic(this.Characteristic.Model, vehicle.model || 'Electric Vehicle')
             .setCharacteristic(this.Characteristic.SerialNumber, vehicle.sn)
-            .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.6');
+            .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.7');
         // Battery values are optional in the Proxy response. Do not create HomeKit
         // services until there is a real value: HomeKit otherwise displays its 0
         // default and repeatedly invokes read handlers for unavailable data.
@@ -360,9 +360,18 @@ class NinebotPlatform {
         const state = accessory?.context.ninebotState;
         return state?.updatedAt ? state : undefined;
     }
+    /**
+     * Service constructors only apply their name on first creation. Existing
+     * cached services otherwise retain the vehicle name that Homebridge gave
+     * them before this plugin assigned a service-specific name. Always refresh
+     * the Name characteristic so HomeKit shows "车辆电源", "寻车响铃", etc.
+     * rather than the vehicle name on every tile after an upgrade.
+     */
     getOrAddService(accessory, serviceType, subtype, name) {
-        return accessory.getServiceById(serviceType, subtype)
+        const service = accessory.getServiceById(serviceType, subtype)
             || accessory.addService(new serviceType(name, subtype));
+        service.setCharacteristic(this.Characteristic.Name, name);
+        return service;
     }
     createMetricService() {
         const hap = this.api.hap;

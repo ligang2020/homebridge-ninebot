@@ -34,6 +34,13 @@ export declare class NinebotPlatform {
     private runMomentaryCommand;
     private updateCachedState;
     private getCachedState;
+    /**
+     * Service constructors only apply their name on first creation. Existing
+     * cached services otherwise retain the vehicle name that Homebridge gave
+     * them before this plugin assigned a service-specific name. Always refresh
+     * the Name characteristic so HomeKit shows "车辆电源", "寻车响铃", etc.
+     * rather than the vehicle name on every tile after an upgrade.
+     */
     private getOrAddService;
     private createMetricService;
 }
