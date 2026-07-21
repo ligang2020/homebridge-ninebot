@@ -5,6 +5,17 @@ const ninebot_client_1 = require("./ninebot-client");
 const PLUGIN_NAME = 'homebridge-ninebot';
 const PLATFORM_NAME = 'Ninebot';
 const ACCESSORY_CONTEXT_KEY = 'ninebot';
+const SERVICE_IDENTITY_VERSION = 2;
+const SERVICE_SUBTYPES = {
+    engine: 'engine-v2',
+    bell: 'bell-v2',
+    bucket: 'bucket-v2',
+    metrics: 'metrics-v2',
+    battery: 'battery-v2',
+    charger: 'charger-v2',
+    lockStatus: 'lock-status-v2',
+    batteryTemperature: 'battery-temperature-v2',
+};
 /** Dynamic Homebridge platform for a Ninebot-compatible proxy API. */
 class NinebotPlatform {
     log;
@@ -104,39 +115,41 @@ class NinebotPlatform {
         }
     }
     configureServices(accessory, vehicle) {
-        accessory.context[ACCESSORY_CONTEXT_KEY] = { sn: vehicle.sn, name: vehicle.name };
+        const context = accessory.context[ACCESSORY_CONTEXT_KEY];
+        accessory.context[ACCESSORY_CONTEXT_KEY] = { ...context, sn: vehicle.sn, name: vehicle.name };
         const info = accessory.getService(this.Service.AccessoryInformation);
         info
             .setCharacteristic(this.Characteristic.Manufacturer, 'Ninebot / Segway')
             .setCharacteristic(this.Characteristic.Model, vehicle.model || 'Electric Vehicle')
             .setCharacteristic(this.Characteristic.SerialNumber, vehicle.sn)
-            .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.7');
+            .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.8');
         // Battery values are optional in the Proxy response. Do not create HomeKit
         // services until there is a real value: HomeKit otherwise displays its 0
         // default and repeatedly invokes read handlers for unavailable data.
         this.removeLegacyPowerStateService(accessory);
         this.removeLegacyLockMechanism(accessory);
+        this.migrateServiceIdentitiesForHomeKitNameRefresh(accessory);
         this.syncBatteryService(accessory);
         this.syncChargerService(accessory);
         this.syncTemperatureService(accessory);
         this.syncLockStatusService(accessory);
-        const power = this.getOrAddService(accessory, this.Service.Switch, 'engine', '车辆电源');
+        const power = this.getOrAddService(accessory, this.Service.Switch, SERVICE_SUBTYPES.engine, '车辆电源');
         power.getCharacteristic(this.Characteristic.On)
             .onGet(() => this.getCachedState(accessory)?.isPoweredOn ?? false)
             .onSet(async (value) => this.setEnginePower(vehicle.sn, Boolean(value)));
-        const bell = this.getOrAddService(accessory, this.Service.Switch, 'bell', '寻车响铃');
+        const bell = this.getOrAddService(accessory, this.Service.Switch, SERVICE_SUBTYPES.bell, '寻车响铃');
         bell.getCharacteristic(this.Characteristic.On).onSet(async (value) => {
             if (Boolean(value)) {
                 await this.runMomentaryCommand(vehicle.sn, 'ringBell', bell);
             }
         });
-        const bucket = this.getOrAddService(accessory, this.Service.Switch, 'bucket', '打开坐桶');
+        const bucket = this.getOrAddService(accessory, this.Service.Switch, SERVICE_SUBTYPES.bucket, '打开坐桶');
         bucket.getCharacteristic(this.Characteristic.On).onSet(async (value) => {
             if (Boolean(value)) {
                 await this.runMomentaryCommand(vehicle.sn, 'openBucket', bucket);
             }
         });
-        const metrics = this.getOrAddService(accessory, this.MetricService, 'metrics', '车辆状态与骑行数据');
+        const metrics = this.getOrAddService(accessory, this.MetricService, SERVICE_SUBTYPES.metrics, '车辆状态与骑行数据');
         metrics.setCharacteristic(this.Characteristic.Name, '车辆状态与骑行数据');
         this.configureMetricGetters(metrics, vehicle.sn);
         this.api.updatePlatformAccessories([accessory]);
@@ -211,7 +224,7 @@ class NinebotPlatform {
     }
     syncBatteryService(accessory) {
         const state = this.getCachedState(accessory);
-        let battery = accessory.getServiceById(this.Service.BatteryService, 'battery');
+        let battery = accessory.getServiceById(this.Service.BatteryService, SERVICE_SUBTYPES.battery);
         if (state?.battery === undefined) {
             if (battery) {
                 accessory.removeService(battery);
@@ -219,7 +232,7 @@ class NinebotPlatform {
             return;
         }
         const batteryValue = state.battery;
-        const batteryService = battery ?? this.getOrAddService(accessory, this.Service.BatteryService, 'battery', '电池');
+        const batteryService = battery ?? this.getOrAddService(accessory, this.Service.BatteryService, SERVICE_SUBTYPES.battery, '电池');
         batteryService.getCharacteristic(this.Characteristic.BatteryLevel).onGet(() => this.getCachedState(accessory)?.battery ?? batteryValue);
         batteryService.getCharacteristic(this.Characteristic.ChargingState).onGet(() => this.getCachedState(accessory)?.isCharging === true
             ? this.Characteristic.ChargingState.CHARGING
@@ -230,14 +243,14 @@ class NinebotPlatform {
     }
     syncChargerService(accessory) {
         const state = this.getCachedState(accessory);
-        const charger = accessory.getServiceById(this.Service.Outlet, 'charger');
+        const charger = accessory.getServiceById(this.Service.Outlet, SERVICE_SUBTYPES.charger);
         if (state?.isCharging === undefined && state?.isChargerConnected === undefined) {
             if (charger) {
                 accessory.removeService(charger);
             }
             return;
         }
-        const chargerService = charger ?? this.getOrAddService(accessory, this.Service.Outlet, 'charger', '充电器');
+        const chargerService = charger ?? this.getOrAddService(accessory, this.Service.Outlet, SERVICE_SUBTYPES.charger, '充电器');
         const readChargerConnected = () => {
             const cached = this.getCachedState(accessory);
             return cached?.isChargerConnected ?? cached?.isCharging ?? false;
@@ -248,6 +261,42 @@ class NinebotPlatform {
             throw new Error('充电器状态由车辆只读上报，当前 Ninebot Proxy 未提供控制充电器的接口。');
         });
         chargerService.getCharacteristic(this.Characteristic.OutletInUse).onGet(() => this.getCachedState(accessory)?.isCharging ?? false);
+    }
+    /**
+     * Apple Home can preserve the original per-service tile title even after a
+     * bridged accessory updates its read-only Name characteristic.  Version 1
+     * of this plugin therefore exposed correct Name values but old tiles could
+     * still show the vehicle name.  Retire those service identities once so
+     * HomeKit receives new services whose initial titles are the correct names.
+     * The bridge pairing and the vehicle accessory UUID are unchanged.
+     */
+    migrateServiceIdentitiesForHomeKitNameRefresh(accessory) {
+        const context = accessory.context[ACCESSORY_CONTEXT_KEY];
+        if (context?.serviceIdentityVersion === SERVICE_IDENTITY_VERSION) {
+            return;
+        }
+        const legacyServices = [
+            [this.Service.Switch, 'engine'],
+            [this.Service.Switch, 'bell'],
+            [this.Service.Switch, 'bucket'],
+            [this.MetricService, 'metrics'],
+            [this.Service.BatteryService, 'battery'],
+            [this.Service.Outlet, 'charger'],
+            [this.Service.ContactSensor, 'lock-status'],
+            [this.Service.TemperatureSensor, 'battery-temperature'],
+        ];
+        let removed = 0;
+        for (const [serviceType, subtype] of legacyServices) {
+            const service = accessory.getServiceById(serviceType, subtype);
+            if (service) {
+                accessory.removeService(service);
+                removed += 1;
+            }
+        }
+        accessory.context[ACCESSORY_CONTEXT_KEY] = { ...context, serviceIdentityVersion: SERVICE_IDENTITY_VERSION };
+        if (removed) {
+            this.log.info(`[Ninebot] 已重新创建 ${removed} 个服务，以刷新 Apple Home 中的配件名称：${accessory.displayName}`);
+        }
     }
     removeLegacyPowerStateService(accessory) {
         const legacy = accessory.getServiceById(this.Service.OccupancySensor, 'power-state');
@@ -265,21 +314,21 @@ class NinebotPlatform {
     }
     syncLockStatusService(accessory) {
         const state = this.getCachedState(accessory);
-        const lockStatus = accessory.getServiceById(this.Service.ContactSensor, 'lock-status');
+        const lockStatus = accessory.getServiceById(this.Service.ContactSensor, SERVICE_SUBTYPES.lockStatus);
         if (!this.config.showLockStatus || state?.isLocked === undefined) {
             if (lockStatus) {
                 accessory.removeService(lockStatus);
             }
             return;
         }
-        const service = lockStatus ?? this.getOrAddService(accessory, this.Service.ContactSensor, 'lock-status', '车辆锁状态');
+        const service = lockStatus ?? this.getOrAddService(accessory, this.Service.ContactSensor, SERVICE_SUBTYPES.lockStatus, '车辆锁状态');
         service.getCharacteristic(this.Characteristic.ContactSensorState).onGet(() => this.getCachedState(accessory)?.isLocked === true
             ? this.Characteristic.ContactSensorState.CONTACT_DETECTED
             : this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
     }
     syncTemperatureService(accessory) {
         const state = this.getCachedState(accessory);
-        let temperature = accessory.getServiceById(this.Service.TemperatureSensor, 'battery-temperature');
+        let temperature = accessory.getServiceById(this.Service.TemperatureSensor, SERVICE_SUBTYPES.batteryTemperature);
         if (state?.batteryTemperature === undefined) {
             if (temperature) {
                 accessory.removeService(temperature);
@@ -287,7 +336,7 @@ class NinebotPlatform {
             return;
         }
         const temperatureValue = state.batteryTemperature;
-        const temperatureService = temperature ?? this.getOrAddService(accessory, this.Service.TemperatureSensor, 'battery-temperature', '电池温度');
+        const temperatureService = temperature ?? this.getOrAddService(accessory, this.Service.TemperatureSensor, SERVICE_SUBTYPES.batteryTemperature, '电池温度');
         temperatureService.getCharacteristic(this.Characteristic.CurrentTemperature).onGet(() => this.getCachedState(accessory)?.batteryTemperature ?? temperatureValue);
     }
     applyState(accessory, snapshot) {
@@ -295,7 +344,7 @@ class NinebotPlatform {
         this.syncBatteryService(accessory);
         this.syncChargerService(accessory);
         this.syncTemperatureService(accessory);
-        const battery = accessory.getServiceById(this.Service.BatteryService, 'battery');
+        const battery = accessory.getServiceById(this.Service.BatteryService, SERVICE_SUBTYPES.battery);
         if (state.battery !== undefined) {
             battery?.updateCharacteristic(this.Characteristic.BatteryLevel, state.battery);
         }
@@ -304,24 +353,24 @@ class NinebotPlatform {
             ? this.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
             : this.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL);
         if (state.batteryTemperature !== undefined) {
-            accessory.getServiceById(this.Service.TemperatureSensor, 'battery-temperature')
+            accessory.getServiceById(this.Service.TemperatureSensor, SERVICE_SUBTYPES.batteryTemperature)
                 ?.updateCharacteristic(this.Characteristic.CurrentTemperature, state.batteryTemperature);
         }
-        accessory.getServiceById(this.Service.Switch, 'engine')
+        accessory.getServiceById(this.Service.Switch, SERVICE_SUBTYPES.engine)
             ?.updateCharacteristic(this.Characteristic.On, state.isPoweredOn ?? false);
-        const charger = accessory.getServiceById(this.Service.Outlet, 'charger');
+        const charger = accessory.getServiceById(this.Service.Outlet, SERVICE_SUBTYPES.charger);
         if (charger) {
             charger.updateCharacteristic(this.Characteristic.On, state.isChargerConnected ?? state.isCharging ?? false);
             charger.updateCharacteristic(this.Characteristic.OutletInUse, state.isCharging ?? false);
         }
         this.syncLockStatusService(accessory);
         if (state.isLocked !== undefined) {
-            accessory.getServiceById(this.Service.ContactSensor, 'lock-status')
+            accessory.getServiceById(this.Service.ContactSensor, SERVICE_SUBTYPES.lockStatus)
                 ?.updateCharacteristic(this.Characteristic.ContactSensorState, state.isLocked
                 ? this.Characteristic.ContactSensorState.CONTACT_DETECTED
                 : this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED);
         }
-        const metrics = accessory.getServiceById(this.MetricService, 'metrics');
+        const metrics = accessory.getServiceById(this.MetricService, SERVICE_SUBTYPES.metrics);
         if (metrics) {
             const characteristics = this.MetricService.Characteristics;
             for (const key of Object.keys(characteristics)) {
@@ -361,11 +410,9 @@ class NinebotPlatform {
         return state?.updatedAt ? state : undefined;
     }
     /**
-     * Service constructors only apply their name on first creation. Existing
-     * cached services otherwise retain the vehicle name that Homebridge gave
-     * them before this plugin assigned a service-specific name. Always refresh
-     * the Name characteristic so HomeKit shows "车辆电源", "寻车响铃", etc.
-     * rather than the vehicle name on every tile after an upgrade.
+     * The standard HomeKit Name characteristic is read-only. Set it on every
+     * update so the cached accessory always advertises the service-specific
+     * title, including after a Homebridge restart.
      */
     getOrAddService(accessory, serviceType, subtype, name) {
         const service = accessory.getServiceById(serviceType, subtype)

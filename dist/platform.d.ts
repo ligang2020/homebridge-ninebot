@@ -25,6 +25,15 @@ export declare class NinebotPlatform {
     private refreshAccessoryInternal;
     private syncBatteryService;
     private syncChargerService;
+    /**
+     * Apple Home can preserve the original per-service tile title even after a
+     * bridged accessory updates its read-only Name characteristic.  Version 1
+     * of this plugin therefore exposed correct Name values but old tiles could
+     * still show the vehicle name.  Retire those service identities once so
+     * HomeKit receives new services whose initial titles are the correct names.
+     * The bridge pairing and the vehicle accessory UUID are unchanged.
+     */
+    private migrateServiceIdentitiesForHomeKitNameRefresh;
     private removeLegacyPowerStateService;
     private removeLegacyLockMechanism;
     private syncLockStatusService;
@@ -35,11 +44,9 @@ export declare class NinebotPlatform {
     private updateCachedState;
     private getCachedState;
     /**
-     * Service constructors only apply their name on first creation. Existing
-     * cached services otherwise retain the vehicle name that Homebridge gave
-     * them before this plugin assigned a service-specific name. Always refresh
-     * the Name characteristic so HomeKit shows "车辆电源", "寻车响铃", etc.
-     * rather than the vehicle name on every tile after an upgrade.
+     * The standard HomeKit Name characteristic is read-only. Set it on every
+     * update so the cached accessory always advertises the service-specific
+     * title, including after a Homebridge restart.
      */
     private getOrAddService;
     private createMetricService;
