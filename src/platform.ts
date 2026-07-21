@@ -141,15 +141,17 @@ export class NinebotPlatform {
       .setCharacteristic(this.Characteristic.Manufacturer, 'Ninebot / Segway')
       .setCharacteristic(this.Characteristic.Model, vehicle.model || 'Electric Vehicle')
       .setCharacteristic(this.Characteristic.SerialNumber, vehicle.sn)
-      .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.5');
+      .setCharacteristic(this.Characteristic.FirmwareRevision, 'homebridge-ninebot 1.0.6');
 
     // Battery values are optional in the Proxy response. Do not create HomeKit
     // services until there is a real value: HomeKit otherwise displays its 0
     // default and repeatedly invokes read handlers for unavailable data.
     this.removeLegacyPowerStateService(accessory);
+    this.removeLegacyLockMechanism(accessory);
     this.syncBatteryService(accessory);
     this.syncChargerService(accessory);
     this.syncTemperatureService(accessory);
+    this.syncLockStatusService(accessory);
 
     const power = this.getOrAddService(accessory, this.Service.Switch, 'engine', '车辆电源');
     power.getCharacteristic(this.Characteristic.On)
@@ -169,15 +171,6 @@ export class NinebotPlatform {
         await this.runMomentaryCommand(vehicle.sn, 'openBucket', bucket);
       }
     });
-
-    if (this.config.showLockStatus) {
-      const lock = this.getOrAddService(accessory, this.Service.LockMechanism, 'lock', '车辆锁状态');
-      lock.getCharacteristic(this.Characteristic.LockCurrentState).onGet(() => this.readLockCurrentState(vehicle.sn));
-      lock.getCharacteristic(this.Characteristic.LockTargetState).onGet(() => this.readLockTargetState(vehicle.sn));
-      lock.getCharacteristic(this.Characteristic.LockTargetState).onSet(async () => {
-        throw new Error('当前 Ninebot Proxy 未提供锁车/解锁接口；已保留只读锁状态，未执行任何操作。');
-      });
-    }
 
     const metrics = this.getOrAddService(accessory, this.MetricService, 'metrics', '车辆状态与骑行数据');
     metrics.setCharacteristic(this.Characteristic.Name, '车辆状态与骑行数据');
@@ -316,6 +309,32 @@ export class NinebotPlatform {
     }
   }
 
+  private removeLegacyLockMechanism(accessory: PlatformAccessory): void {
+    const legacy = accessory.getServiceById(this.Service.LockMechanism, 'lock');
+    if (legacy) {
+      accessory.removeService(legacy);
+      this.log.debug(`[Ninebot] 已移除会被 HomeKit 当作可控制锁的旧版服务：${accessory.displayName}`);
+    }
+  }
+
+  private syncLockStatusService(accessory: PlatformAccessory): void {
+    const state = this.getCachedState(accessory);
+    const lockStatus = accessory.getServiceById(this.Service.ContactSensor, 'lock-status');
+    if (!this.config.showLockStatus || state?.isLocked === undefined) {
+      if (lockStatus) {
+        accessory.removeService(lockStatus);
+      }
+      return;
+    }
+
+    const service = lockStatus ?? this.getOrAddService(accessory, this.Service.ContactSensor, 'lock-status', '车辆锁状态');
+    service.getCharacteristic(this.Characteristic.ContactSensorState).onGet(() =>
+      this.getCachedState(accessory)?.isLocked === true
+        ? this.Characteristic.ContactSensorState.CONTACT_DETECTED
+        : this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+    );
+  }
+
   private syncTemperatureService(accessory: PlatformAccessory): void {
     const state = this.getCachedState(accessory);
     let temperature = accessory.getServiceById(this.Service.TemperatureSensor, 'battery-temperature');
@@ -362,17 +381,14 @@ export class NinebotPlatform {
       charger.updateCharacteristic(this.Characteristic.OutletInUse, state.isCharging ?? false);
     }
 
-    const lock = accessory.getServiceById(this.Service.LockMechanism, 'lock');
-    if (lock) {
-      const current = state.isLocked === true
-        ? this.Characteristic.LockCurrentState.SECURED
-        : state.isLocked === false
-          ? this.Characteristic.LockCurrentState.UNSECURED
-          : this.Characteristic.LockCurrentState.UNKNOWN;
-      lock.updateCharacteristic(this.Characteristic.LockCurrentState, current);
-      lock.updateCharacteristic(this.Characteristic.LockTargetState,
-        state.isLocked === true ? this.Characteristic.LockTargetState.SECURED : this.Characteristic.LockTargetState.UNSECURED,
-      );
+    this.syncLockStatusService(accessory);
+    if (state.isLocked !== undefined) {
+      accessory.getServiceById(this.Service.ContactSensor, 'lock-status')
+        ?.updateCharacteristic(this.Characteristic.ContactSensorState,
+          state.isLocked
+            ? this.Characteristic.ContactSensorState.CONTACT_DETECTED
+            : this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED,
+        );
     }
 
     const metrics = (accessory as any).getServiceById(this.MetricService, 'metrics');
@@ -403,21 +419,6 @@ export class NinebotPlatform {
     await this.client[command](sn);
     this.log.info(`[Ninebot] ${this.vehicleNames.get(sn) || sn}：已发送${command === 'ringBell' ? '寻车响铃' : '打开坐桶'}命令。`);
     setTimeout(() => service.updateCharacteristic(this.Characteristic.On, false), 800);
-  }
-
-  private readLockCurrentState(sn: string): number {
-    const state = this.getCachedState(this.accessories.get(sn));
-    return state?.isLocked === true
-      ? this.Characteristic.LockCurrentState.SECURED
-      : state?.isLocked === false
-        ? this.Characteristic.LockCurrentState.UNSECURED
-        : this.Characteristic.LockCurrentState.UNKNOWN;
-  }
-
-  private readLockTargetState(sn: string): number {
-    return this.getCachedState(this.accessories.get(sn))?.isLocked === true
-      ? this.Characteristic.LockTargetState.SECURED
-      : this.Characteristic.LockTargetState.UNSECURED;
   }
 
   private updateCachedState(sn: string, patch: Partial<NinebotVehicleState>): void {

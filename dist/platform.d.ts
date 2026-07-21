@@ -26,12 +26,12 @@ export declare class NinebotPlatform {
     private syncBatteryService;
     private syncChargerService;
     private removeLegacyPowerStateService;
+    private removeLegacyLockMechanism;
+    private syncLockStatusService;
     private syncTemperatureService;
     private applyState;
     private setEnginePower;
     private runMomentaryCommand;
-    private readLockCurrentState;
-    private readLockTargetState;
     private updateCachedState;
     private getCachedState;
     private getOrAddService;
